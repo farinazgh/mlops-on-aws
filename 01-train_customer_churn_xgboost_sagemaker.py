@@ -13,6 +13,9 @@ Train a customer churn prediction model with Amazon SageMaker XGBoost.
 4. Splits the data into train/validation/test datasets.
 5. Uploads train and validation CSV files to S3.
 6. Trains an XGBoost model using the built-in SageMaker XGBoost container.
+7. Optionally deploys the trained model to a SageMaker real-time endpoint.
+8. Runs inference on the test dataset and calculates accuracy.
+9. Deletes the endpoint by default to avoid ongoing charges.
 
 """
 
@@ -27,12 +30,15 @@ import numpy as np
 import pandas as pd
 import sagemaker
 from dotenv import load_dotenv
+from sagemaker import image_uris
+from sagemaker.deserializers import StringDeserializer
 from sagemaker.estimator import Estimator
 from sagemaker.inputs import TrainingInput
+from sagemaker.predictor import Predictor
+from sagemaker.serializers import CSVSerializer
 from sagemaker.session import Session
-from sagemaker import image_uris
+from sklearn.metrics import accuracy_score
 
-# Load environment variables from .env
 load_dotenv()
 
 
@@ -44,6 +50,10 @@ DATASET_S3_URI = os.getenv(
 DEFAULT_BUCKET = os.getenv("SAGEMAKER_BUCKET")
 DEFAULT_ROLE = os.getenv("SAGEMAKER_ROLE")
 DEFAULT_INSTANCE_TYPE = os.getenv("SAGEMAKER_INSTANCE_TYPE", "ml.m5.large")
+DEFAULT_ENDPOINT_INSTANCE_TYPE = os.getenv(
+    "SAGEMAKER_ENDPOINT_INSTANCE_TYPE",
+    "ml.m5.large",
+)
 
 LOCAL_DATASET_PATH = Path("churn.txt")
 TRAIN_CSV_PATH = Path("churn_train.csv")
@@ -152,8 +162,8 @@ def train_xgboost_model(
     train_s3_uri: str,
     validation_s3_uri: str,
     instance_type: str,
-) -> None:
-    """Create and train a SageMaker built-in XGBoost estimator."""
+) -> Estimator:
+    """Create, train, and return a SageMaker built-in XGBoost estimator."""
     s3_input_train = TrainingInput(
         s3_data=train_s3_uri,
         content_type="csv",
@@ -194,6 +204,44 @@ def train_xgboost_model(
         }
     )
 
+    return xgb
+
+
+def deploy_model(
+    estimator: Estimator,
+    endpoint_instance_type: str,
+) -> Predictor:
+    """Deploy the trained estimator to a SageMaker real-time endpoint."""
+    return estimator.deploy(
+        initial_instance_count=1,
+        instance_type=endpoint_instance_type,
+        serializer=CSVSerializer(),
+        deserializer=StringDeserializer(),
+    )
+
+
+def evaluate_model(
+    predictor: Predictor,
+    test_df: pd.DataFrame,
+) -> float:
+    """Run inference against the endpoint and return test accuracy."""
+    test_np = test_df.to_numpy()
+
+    # Column 0 is the label because we moved Churn? to the first column.
+    actual = test_np[:, 0]
+
+    # All remaining columns are model input features.
+    attributes = test_np[:, 1:]
+
+    # SageMaker XGBoost returns one probability per row, separated by newlines.
+    results = predictor.predict(attributes)
+    predictions = np.fromstring(results, sep="\n")
+
+    # binary:logistic returns probabilities. Round them to 0/1 class labels.
+    predicted_labels = np.round(predictions)
+
+    return accuracy_score(actual, predicted_labels)
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -218,6 +266,24 @@ def parse_args() -> argparse.Namespace:
         help="Training instance type. Defaults to SAGEMAKER_INSTANCE_TYPE from .env or ml.m5.large.",
     )
 
+    parser.add_argument(
+        "--endpoint-instance-type",
+        default=DEFAULT_ENDPOINT_INSTANCE_TYPE,
+        help="Endpoint instance type. Defaults to SAGEMAKER_ENDPOINT_INSTANCE_TYPE from .env or ml.m5.large.",
+    )
+
+    parser.add_argument(
+        "--deploy",
+        action="store_true",
+        help="Deploy the trained model, run test inference, calculate accuracy, and then delete the endpoint.",
+    )
+
+    parser.add_argument(
+        "--keep-endpoint",
+        action="store_true",
+        help="Keep the deployed endpoint running after evaluation. Warning: this continues to incur cost.",
+    )
+
     return parser.parse_args()
 
 
@@ -229,11 +295,13 @@ def main() -> None:
     bucket = args.bucket or session.default_bucket()
     role = args.role or sagemaker.get_execution_role()
     instance_type = args.instance_type
+    endpoint_instance_type = args.endpoint_instance_type
 
     print(f"Using bucket: {bucket}")
     print(f"Using role: {role}")
     print(f"Using AWS region: {session.boto_region_name}")
     print(f"Using training instance type: {instance_type}")
+    print(f"Using endpoint instance type: {endpoint_instance_type}")
 
     download_dataset()
 
@@ -243,7 +311,7 @@ def main() -> None:
 
     train_s3_uri, validation_s3_uri = upload_training_files(bucket)
 
-    train_xgboost_model(
+    xgb = train_xgboost_model(
         session=session,
         role=role,
         bucket=bucket,
@@ -253,6 +321,36 @@ def main() -> None:
     )
 
     print("Training completed successfully.")
+
+    if not args.deploy:
+        print(
+            "Skipping deployment. Run again with --deploy to create an endpoint and test inference."
+        )
+        return
+
+    predictor: Predictor | None = None
+
+    try:
+        print("Deploying trained model to a real-time SageMaker endpoint...")
+        predictor = deploy_model(
+            estimator=xgb,
+            endpoint_instance_type=endpoint_instance_type,
+        )
+
+        print("Running inference on the test dataset...")
+        accuracy = evaluate_model(
+            predictor=predictor,
+            test_df=test_df,
+        )
+        print(f"Test accuracy: {accuracy:.4f}")
+
+    finally:
+        if predictor is not None and not args.keep_endpoint:
+            print("Deleting endpoint to avoid ongoing charges...")
+            predictor.delete_endpoint()
+            print("Endpoint deleted.")
+        elif predictor is not None:
+            print(f"Endpoint kept running: {predictor.endpoint_name}")
 
 
 if __name__ == "__main__":
