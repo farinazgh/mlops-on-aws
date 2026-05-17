@@ -2,12 +2,9 @@
 """
 Train a customer churn prediction model with Amazon SageMaker XGBoost.
 
-Converted from the Jupyter notebook: churn_model.ipynb
-
-What this script does:
 1. Creates a SageMaker session.
 2. Downloads the sample customer churn dataset from the public SageMaker sample S3 bucket.
-3. Preprocesses the dataset:
+3. Pre-processes the dataset:
    - removes the Phone column
    - converts Area Code to a categorical/object column
    - converts Churn? from True./False. to 1/0
@@ -17,12 +14,6 @@ What this script does:
 5. Uploads train and validation CSV files to S3.
 6. Trains an XGBoost model using the built-in SageMaker XGBoost container.
 
-Run from terminal:
-    python train_customer_churn_xgboost_sagemaker.py
-
-Optional examples:
-    python train_customer_churn_xgboost_sagemaker.py --bucket my-sagemaker-bucket
-    python train_customer_churn_xgboost_sagemaker.py --instance-type ml.m5.large
 """
 
 from __future__ import annotations
@@ -36,7 +27,10 @@ import numpy as np
 import pandas as pd
 import sagemaker
 from dotenv import load_dotenv
+from sagemaker.estimator import Estimator
 from sagemaker.inputs import TrainingInput
+from sagemaker.session import Session
+from sagemaker import image_uris
 
 # Load environment variables from .env
 load_dotenv()
@@ -72,19 +66,25 @@ def download_dataset() -> None:
     run_command(["aws", "s3", "cp", DATASET_S3_URI, str(LOCAL_DATASET_PATH)])
 
 
+#  cleaned data; numeric labels; encoded categories; ML-ready features
 def load_and_preprocess_data(dataset_path: Path) -> pd.DataFrame:
     """Load the churn dataset and apply preprocessing."""
+    # pandas reads the CSV/text file into memory as a DataFrame.
+    # very much like spark.read.csv(...)
     churn_df = pd.read_csv(dataset_path)
-
+    # Phone numbers are useless for prediction.
+    # pandas operations usually return a NEW DataFrame. Like Spark transformations: df = df.filter(...)
     churn_df = churn_df.drop("Phone", axis=1)
+    # Converts the Area Code column from numeric to categorical/text type. so 415!> 352 category not number
     churn_df["Area Code"] = churn_df["Area Code"].astype(object)
+    # Converts False. into 0 and everything else into 1.
     churn_df["Churn?"] = np.where(churn_df["Churn?"] == "False.", 0, 1)
 
     churn_df = pd.concat(
         [churn_df["Churn?"], churn_df.drop(["Churn?"], axis=1)],
         axis=1,
     )
-
+    # Converts categorical/text columns into numeric one-hot encoded columns; Spark ML StringIndexer; OneHotEncoder
     churn_df = pd.get_dummies(churn_df)
 
     return churn_df
@@ -94,9 +94,11 @@ def split_data(
     churn_df: pd.DataFrame,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Shuffle and split the data into train, validation, and test datasets."""
+    # Randomly shuffles all rows to evenly distribute churn=1
+    # random state 42: Same random order every run.
     churn_df_shuffled = churn_df.sample(frac=1, random_state=42)
     dataset_length = len(churn_df_shuffled)
-
+    # NumPy splits the dataset into 3 parts.
     churn_df_train, churn_df_validate, churn_df_test = np.split(
         churn_df_shuffled,
         [int(0.6 * dataset_length), int(0.8 * dataset_length)],
@@ -132,7 +134,7 @@ def upload_training_files(bucket: str) -> tuple[str, str]:
 
 
 def train_xgboost_model(
-    session: sagemaker.Session,
+    session: Session,
     role: str,
     bucket: str,
     train_s3_uri: str,
@@ -140,16 +142,25 @@ def train_xgboost_model(
     instance_type: str,
 ) -> None:
     """Create and train a SageMaker built-in XGBoost estimator."""
-    s3_input_train = TrainingInput(s3_data=train_s3_uri, content_type="csv")
-    s3_input_validate = TrainingInput(s3_data=validation_s3_uri, content_type="csv")
-
-    xgb_image = sagemaker.image_uris.retrieve(
-        framework="xgboost",
-        region=session.boto_region_name,
-        version="1.5-1",
+    s3_input_train = TrainingInput(
+        s3_data=train_s3_uri,
+        content_type="csv",
     )
 
-    xgb = sagemaker.estimator.Estimator(
+    s3_input_validate = TrainingInput(
+        s3_data=validation_s3_uri,
+        content_type="csv",
+    )
+
+    xgb_image = image_uris.retrieve(
+        framework="xgboost",
+        region=session.boto_region_name,
+        version="1.7-1",
+        image_scope="training",
+        instance_type=instance_type,
+    )
+
+    xgb = Estimator(
         image_uri=xgb_image,
         role=role,
         instance_count=1,
@@ -165,7 +176,7 @@ def train_xgboost_model(
     )
 
     xgb.fit(
-        {
+        inputs={
             "train": s3_input_train,
             "validation": s3_input_validate,
         }
