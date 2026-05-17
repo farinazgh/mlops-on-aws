@@ -79,7 +79,7 @@ def load_and_preprocess_data(dataset_path: Path) -> pd.DataFrame:
     churn_df["Area Code"] = churn_df["Area Code"].astype(object)
     # Converts False. into 0 and everything else into 1.
     churn_df["Churn?"] = np.where(churn_df["Churn?"] == "False.", 0, 1)
-
+    # The Churn? column is then moved to become the first column in the dataset because the XGBoost algorithm used in this demo requires the target column to appear first.
     churn_df = pd.concat(
         [churn_df["Churn?"], churn_df.drop(["Churn?"], axis=1)],
         axis=1,
@@ -133,6 +133,18 @@ def upload_training_files(bucket: str) -> tuple[str, str]:
     return train_s3_uri, validation_s3_uri
 
 
+#                                                                                                                                                                              |
+# Training Dataset:
+# The portion of data used by the model to learn patterns, relationships, and parameters during training.
+# The model directly updates its internal weights/trees based on this data.
+
+# Validation Dataset: A separate dataset used during training to evaluate how well the model generalizes to unseen data.
+# It helps detect overfitting and tune model/hyperparameters without directly training on it.
+
+
+# Test Dataset: A final unseen dataset used only after training is complete to measure the model’s real-world performance objectively.
+# It provides an unbiased evaluation of the finished model.
+#
 def train_xgboost_model(
     session: Session,
     role: str,
