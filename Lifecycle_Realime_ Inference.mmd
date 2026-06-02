@@ -1,0 +1,29 @@
+flowchart TD
+
+    A[model.tar.gz in S3] --> B[Deploy Endpoint]
+
+    B --> C[Launch Hosting Instance<br/>ml.m5.large]
+
+    C --> D[Download model.tar.gz]
+
+    D --> E[Load Model into Memory]
+
+    E --> F[Endpoint Ready]
+
+    F --> G[Prediction Request 1]
+    F --> H[Prediction Request 2]
+    F --> I[Prediction Request N]
+
+    G --> J[Return Prediction]
+    H --> J
+    I --> J
+
+    J --> F
+
+    F --> K{Delete Endpoint?}
+
+    K -->|No| F
+
+    K -->|Yes| L[Terminate Hosting Instance]
+
+    style L fill:#ffcccc

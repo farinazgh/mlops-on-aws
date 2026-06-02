@@ -109,6 +109,12 @@ def split_data(
     churn_df_shuffled = churn_df.sample(frac=1, random_state=42)
     dataset_length = len(churn_df_shuffled)
     # NumPy splits the dataset into 3 parts.
+    #                One split operation
+    #                        │
+    #                        ▼
+    #       ┌────────┬────────────┬────────┐
+    #       │ Train  │ Validation │ Test   │
+    #       └────────┴────────────┴────────┘
     churn_df_train, churn_df_validate, churn_df_test = np.split(
         churn_df_shuffled,
         [int(0.6 * dataset_length), int(0.8 * dataset_length)],
