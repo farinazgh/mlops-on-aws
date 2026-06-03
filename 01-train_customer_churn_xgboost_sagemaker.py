@@ -13,9 +13,8 @@ Train a customer churn prediction model with Amazon SageMaker XGBoost.
 4. Splits the data into train/validation/test datasets.
 5. Uploads train and validation CSV files to S3.
 6. Trains an XGBoost model using the built-in SageMaker XGBoost container.
-7. Optionally deploys the trained model to a SageMaker real-time endpoint.
-8. Runs inference on the test dataset and calculates accuracy.
-9. Deletes the endpoint by default to avoid ongoing charges.
+7. Saves the model artifact URI and training metadata to training_output.json.
+8. Keeps churn_test.csv locally so the deployment script can optionally evaluate accuracy.
 
 """
 
@@ -47,7 +46,8 @@ DATASET_S3_URI = os.getenv(
 DEFAULT_BUCKET = os.getenv("SAGEMAKER_BUCKET")
 DEFAULT_ROLE = os.getenv("SAGEMAKER_ROLE")
 DEFAULT_TRAINING_INSTANCE_TYPE = os.getenv(
-    "SAGEMAKER_TRAINING_INSTANCE_TYPE", "ml.m5.large"
+    "SAGEMAKER_TRAINING_INSTANCE_TYPE",
+    os.getenv("SAGEMAKER_INSTANCE_TYPE", "ml.m5.large"),
 )
 DEFAULT_XGBOOST_VERSION = os.getenv("SAGEMAKER_XGBOOST_VERSION", "1.7-1")
 
@@ -221,7 +221,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--training-instance-type",
         default=DEFAULT_TRAINING_INSTANCE_TYPE,
-        help="Training instance type. Defaults to SAGEMAKER_TRAINING_INSTANCE_TYPE or ml.m5.large.",
+        help="Training instance type. Defaults to SAGEMAKER_TRAINING_INSTANCE_TYPE, SAGEMAKER_INSTANCE_TYPE, or ml.m5.large.",
     )
 
     parser.add_argument(
@@ -288,6 +288,7 @@ def main() -> None:
         "training_image_uri": xgb.image_uri,
         "xgboost_version": args.xgboost_version,
         "region": session.boto_region_name,
+        "test_csv_path": str(TEST_CSV_PATH),
     }
 
     TRAINING_OUTPUT_JSON_PATH.write_text(json.dumps(output, indent=2), encoding="utf-8")
@@ -295,9 +296,10 @@ def main() -> None:
     print("\nTraining completed successfully.")
     print(f"Model artifact S3 URI: {model_data_s3_uri}")
     print(f"Saved training metadata locally to: {TRAINING_OUTPUT_JSON_PATH}")
+    print(f"Saved local test dataset to: {TEST_CSV_PATH}")
     print("\nUse this model artifact URI in the deployment script with:")
     print(
-        f"python 02_deploy_test_customer_churn_xgboost_sagemaker.py --model-data-s3-uri {model_data_s3_uri}"
+        f"python deploy.py --model-data-s3-uri {model_data_s3_uri} --test-csv {TEST_CSV_PATH}"
     )
 
 
