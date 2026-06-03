@@ -12,6 +12,7 @@ dependencies = [
     "matplotlib>=3.10.9",
     "numpy>=2.4.5",
     "pandas>=3.0.3",
+    "pandas-stubs~=3.0.3",
     "python-dotenv>=1.2.2",
     "sagemaker>=2.240,<3",
     "scikit-learn>=1.8.0",

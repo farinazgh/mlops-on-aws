@@ -1,0 +1,16 @@
+flowchart LR
+
+    A[Raw Data]
+    --> B[Processing]
+    --> C[Ground Truth]
+    --> D[Algorithms]
+    --> E[Autopilot]
+    --> F[Model Registry]
+    --> G[Endpoints]
+
+    B -. Prepare .- B
+    C -. Label .- C
+    D -. Train .- D
+    E -. Auto Train/Tune .- E
+    F -. Version & Store .- F
+    G -. Deploy & Infer .- G

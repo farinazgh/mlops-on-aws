@@ -1,1 +1,13 @@
-Training Lifecycle (Temporary Compute)
+flowchart TD
+
+    A[Raw Dataset in S3] --> B[SageMaker Training Job]
+    B --> C[Launch Training Instance<br/>ml.m5.large]
+    C --> D[Download Train & Validation Data]
+    D --> E[Train XGBoost Model]
+    E --> F[Create model.tar.gz]
+    F --> G[Upload model.tar.gz to S3 Output]
+
+    G --> H[Training Complete]
+    H --> I[Terminate Training Instance]
+
+    style I fill:#ffcccc
