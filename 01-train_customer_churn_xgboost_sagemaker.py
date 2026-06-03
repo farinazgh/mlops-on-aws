@@ -103,19 +103,22 @@ def split_data(
     """Shuffle and split the data into train, validation, and test datasets."""
     # Randomly shuffles all rows to evenly distribute churn=1
     # random state 42: Same random order every run.
-    churn_df_shuffled = churn_df.sample(frac=1, random_state=42)
+    churn_df_shuffled = churn_df.sample(frac=1, random_state=42).reset_index(drop=True)
     dataset_length = len(churn_df_shuffled)
-    # NumPy splits the dataset into 3 parts.
-    #                One split operation
-    #                        │
-    #                        ▼
+
+    train_end = int(0.6 * dataset_length)
+    validation_end = int(0.8 * dataset_length)
+
+    # pandas-native split, so the result stays as DataFrames.
+    # This is safer than np.split here because SageMaker needs CSV files,
+    # and only pandas DataFrames have .to_csv().
+    #
     #       ┌────────┬────────────┬────────┐
     #       │ Train  │ Validation │ Test   │
     #       └────────┴────────────┴────────┘
-    churn_df_train, churn_df_validate, churn_df_test = np.split(
-        churn_df_shuffled,
-        [int(0.6 * dataset_length), int(0.8 * dataset_length)],
-    )
+    churn_df_train = churn_df_shuffled.iloc[:train_end]
+    churn_df_validate = churn_df_shuffled.iloc[train_end:validation_end]
+    churn_df_test = churn_df_shuffled.iloc[validation_end:]
 
     return churn_df_train, churn_df_validate, churn_df_test
 
